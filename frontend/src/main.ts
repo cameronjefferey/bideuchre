@@ -6,12 +6,13 @@ import {
 } from "./views/Lobby";
 import { renderTable, type TableState } from "./views/Table";
 
+const API_BASE =
+  import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+
 type View =
   | { kind: "landing"; state: LandingState }
   | { kind: "lobby"; state: LobbyState & { seat: SeatKey } }
   | { kind: "table"; state: TableState };
-
-const API_BASE = "http://localhost:8000";
 
 const app = document.getElementById("app") as HTMLElement;
 
@@ -116,7 +117,8 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
   };
 
   // Establish WebSocket connection for this room.
-  ws = new WebSocket(`ws://localhost:8000/ws/${roomCode}/${data.seat}`);
+  const wsBase = API_BASE.replace(/^http/, "ws").replace(/\/$/, "");
+  ws = new WebSocket(`${wsBase}/ws/${roomCode}/${data.seat}`);
   ws.onopen = () => {
     console.log("WebSocket connected");
   };
