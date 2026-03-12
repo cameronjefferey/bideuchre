@@ -4,6 +4,7 @@ export type LobbyState = {
   roomCode: string;
   seats: Record<SeatKey, string | null>;
   logs: string[];
+  connectionLost?: boolean;
 };
 
 export type LobbyCallbacks = {
@@ -21,18 +22,40 @@ export function renderLobby(
   const card = document.createElement("div");
   card.className = "card";
 
+  if (state.connectionLost) {
+    const banner = document.createElement("div");
+    banner.className = "connection-lost-banner";
+    banner.textContent = "Connection lost. Refresh the page to rejoin.";
+    card.appendChild(banner);
+  }
+
   const header = document.createElement("div");
   header.className = "card-header";
+  const pill = document.createElement("div");
+  pill.className = "pill room-code-pill";
+  pill.innerHTML = `
+    <span>Room code</span>
+    <strong class="room-code-display">${state.roomCode}</strong>
+  `;
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "button button-secondary";
+  copyBtn.textContent = "Copy";
+  copyBtn.style.marginLeft = "0.5rem";
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(state.roomCode).then(
+      () => { copyBtn.textContent = "Copied!"; setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500); },
+      () => {},
+    );
+  };
   header.innerHTML = `
     <div>
       <div class="title">Lobby</div>
-      <div class="subtitle">Share the room code so friends can join. When all four seats are filled, deal a hand.</div>
-    </div>
-    <div class="pill">
-      <span>Room code</span>
-      <strong class="room-code-display">${state.roomCode}</strong>
+      <div class="subtitle">Share the room code so others can join. When all four seats are filled, click <strong>Deal new hand</strong> to start.</div>
     </div>
   `;
+  pill.appendChild(copyBtn);
+  header.appendChild(pill);
 
   const body = document.createElement("div");
   body.className = "grid grid-2";
@@ -74,6 +97,11 @@ export function renderLobby(
   logCard.appendChild(logLabel);
   logCard.appendChild(logContainer);
 
+  const filledCount = (["N", "E", "S", "W"] as SeatKey[]).filter(
+    (s) => state.seats[s],
+  ).length;
+  const canStart = filledCount === 4;
+
   if (callbacks?.onStartHand || callbacks?.onDevFill) {
     const controls = document.createElement("div");
     controls.className = "button-row";
@@ -83,8 +111,17 @@ export function renderLobby(
       startButton.type = "button";
       startButton.className = "button button-primary";
       startButton.textContent = "Deal new hand";
+      startButton.disabled = !canStart;
       startButton.onclick = () => callbacks.onStartHand?.();
       controls.appendChild(startButton);
+      if (!canStart) {
+        const hint = document.createElement("span");
+        hint.className = "subtitle";
+        hint.style.marginLeft = "0.5rem";
+        hint.style.color = "var(--text-muted, #94a3b8)";
+        hint.textContent = `(${filledCount}/4 players)`;
+        controls.appendChild(hint);
+      }
     }
     if (callbacks?.onDevFill) {
       const fillButton = document.createElement("button");

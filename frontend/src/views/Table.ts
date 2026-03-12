@@ -50,6 +50,7 @@ export type TableState = {
   }>;
   /** Toggles the "previous round tricks" review panel (hand complete only). */
   showPreviousTricks?: boolean;
+  connectionLost?: boolean;
 };
 
 export type TableCallbacks = {
@@ -79,6 +80,13 @@ export function renderTable(
 
   const card = document.createElement("div");
   card.className = "card";
+
+  if (state.connectionLost) {
+    const banner = document.createElement("div");
+    banner.className = "connection-lost-banner";
+    banner.textContent = "Connection lost. Refresh the page to rejoin.";
+    card.appendChild(banner);
+  }
 
   // —— Header: room, you, phase, score ——
   const header = document.createElement("div");

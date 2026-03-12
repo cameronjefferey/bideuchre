@@ -596,12 +596,28 @@ select {
   text-align: center;
 }
 
+.room-code-pill {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .room-code-display {
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 0.15em;
   color: var(--accent);
   font-family: "JetBrains Mono", "SF Mono", monospace;
+}
+
+.connection-lost-banner {
+  background: var(--error);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  font-weight: 500;
+  text-align: center;
 }
 
 .landing-actions .table-section {

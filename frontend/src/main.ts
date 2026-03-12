@@ -367,6 +367,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
   ws.onclose = () => {
     ws = null;
     if (currentView.kind === "lobby" || currentView.kind === "table") {
+      (currentView.state as { connectionLost?: boolean }).connectionLost = true;
       currentView.state.logs.push("Disconnected from table.");
       render();
     }
