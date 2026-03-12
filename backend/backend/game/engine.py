@@ -4,7 +4,14 @@ import random
 from typing import Dict, List
 
 from .bidding import Bid, BidLevel, BidType
-from .cards import Card, Suit, double_euchre_deck_without_9s_10s, trick_winner, card_is_trump
+from .cards import (
+    Card,
+    Suit,
+    double_euchre_deck_without_9s_10s,
+    trick_winner,
+    trick_winner_high_low,
+    card_is_trump,
+)
 from .scoring import score_for_all_tricks
 from .state import GameState, Phase, SEATS, Player, Trick
 
@@ -57,15 +64,18 @@ def apply_bid(state: GameState, bid: Bid) -> None:
 
 def start_play(
     state: GameState,
-    trump: Suit,
-    leader: str,
+    trump: Suit | None = None,
+    leader: str = "",
     alone_seat: str | None = None,
+    high_low: str | None = None,
 ) -> None:
     """Begin the playing phase for a completed contract.
 
     The leader is the winning bidder's seat.
+    Either trump (suit) or high_low ("HIGH" or "LOW") must be set.
     """
     state.trump = trump
+    state.high_low = high_low
     state.alone_seat = alone_seat
     state.current_trick = Trick(leader=leader)
     state.phase = Phase.PLAYING
@@ -79,20 +89,22 @@ def play_card(state: GameState, seat: str, card: Card) -> None:
     if card not in hand:
         raise ValueError("Card not in hand")
 
-    # Enforce following suit where possible, treating left/right bowers as trump.
-    # The first card of the trick establishes the led "logical" suit:
-    # - If it is trump (including bowers), the led suit is trump.
-    # - Otherwise, it is that card's printed suit.
-    if state.current_trick.plays and state.trump is not None:
+    # Enforce following suit where possible.
+    # With suit trump: led "logical" suit is trump if first card is trump/bower, else printed suit.
+    # With High/Low: led suit is the first card's printed suit only.
+    if state.current_trick.plays:
         first_card = state.current_trick.plays[0][1]
-
-        def logical_suit(c: Card) -> Suit:
-            return state.trump if card_is_trump(c, state.trump) else c.suit
-
-        led_suit = logical_suit(first_card)
-        if logical_suit(card) is not led_suit:
-            if any(logical_suit(c) is led_suit for c in hand):
+        if state.high_low:
+            led_suit = first_card.suit
+            if card.suit is not led_suit and any(c.suit is led_suit for c in hand):
                 raise ValueError("Must follow suit if able")
+        elif state.trump is not None:
+            def logical_suit(c: Card) -> Suit:
+                return state.trump if card_is_trump(c, state.trump) else c.suit
+            led_suit = logical_suit(first_card)
+            if logical_suit(card) is not led_suit:
+                if any(logical_suit(c) is led_suit for c in hand):
+                    raise ValueError("Must follow suit if able")
 
     hand.remove(card)
     state.current_trick.plays.append((seat, card))
@@ -109,16 +121,19 @@ def play_card(state: GameState, seat: str, card: Card) -> None:
             expected_plays = 3
 
     if len(state.current_trick.plays) == expected_plays:
-        assert state.trump is not None
-        # Determine logical led suit for winner calculation (same rules as above).
         first_card = state.current_trick.plays[0][1]
-
-        def logical_suit(c: Card) -> Suit:
-            return state.trump if card_is_trump(c, state.trump) else c.suit
-
-        led_suit = logical_suit(first_card)
         _, cards = zip(*state.current_trick.plays)
-        winner_index = trick_winner(cards, trump=state.trump, led_suit=led_suit)
+        if state.high_low:
+            led_suit = first_card.suit
+            winner_index = trick_winner_high_low(
+                cards, led_suit=led_suit, high=(state.high_low == "HIGH")
+            )
+        else:
+            assert state.trump is not None
+            def logical_suit(c: Card) -> Suit:
+                return state.trump if card_is_trump(c, state.trump) else c.suit
+            led_suit = logical_suit(first_card)
+            winner_index = trick_winner(cards, trump=state.trump, led_suit=led_suit)
         winner_seat = state.current_trick.plays[winner_index][0]
 
         state.completed_tricks.append(state.current_trick)

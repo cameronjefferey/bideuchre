@@ -47,6 +47,7 @@ class GameState:
     current_bid: Optional[Bid] = None
     current_turn: Optional[str] = None
     trump: Optional[Suit] = None
+    high_low: Optional[str] = None  # "HIGH" or "LOW" when no trump suit
     alone_seat: Optional[str] = None
     current_trick: Optional[Trick] = None
     completed_tricks: List[Trick] = field(default_factory=list)

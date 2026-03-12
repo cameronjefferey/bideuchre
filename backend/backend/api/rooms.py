@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.rooms import room_manager
+from .ws import connection_manager
 
 
 router = APIRouter()
@@ -28,11 +29,13 @@ def create_room() -> CreateRoomResponse:
 
 
 @router.post("/{room_code}/join", response_model=JoinRoomResponse)
-def join_room(room_code: str, body: JoinRoomRequest) -> JoinRoomResponse:
+async def join_room(room_code: str, body: JoinRoomRequest) -> JoinRoomResponse:
     room = room_manager.get_room(room_code)
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found")
     seat = room.join(body.name, preferred_seat=body.seat)
+    # Tell any connected clients that the seat map changed.
+    await connection_manager.broadcast_room_update(room_code)
     return JoinRoomResponse(room_code=room.code, seat=seat)
 
 

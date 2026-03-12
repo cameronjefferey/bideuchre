@@ -373,6 +373,13 @@ select {
   min-width: 64px;
 }
 
+.table-seat.active-seat {
+  border-color: rgba(59, 130, 246, 0.9);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.6),
+    0 0 16px rgba(59, 130, 246, 0.45);
+  background: radial-gradient(circle at top, rgba(59, 130, 246, 0.4), transparent 55%);
+}
+
 .table-seat.winner-seat {
   border-color: rgba(245, 158, 11, 0.9);
   box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.6),
@@ -421,6 +428,18 @@ select {
   gap: 0.4rem;
   justify-content: center;
   margin-top: 0.5rem;
+}
+
+.trick-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.trick-slot-name {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .trick-cards .playing-card {
@@ -587,4 +606,90 @@ select {
 
 .landing-actions .table-section {
   margin-bottom: 0;
+}
+
+/* Previous round tricks review overlay */
+.tricks-review-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.tricks-review-panel {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 1.5rem 2rem;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  max-width: 720px;
+  width: 100%;
+}
+
+.tricks-review-title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.tricks-review-trick {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tricks-review-trick:last-of-type {
+  border-bottom: none;
+}
+
+.tricks-review-trick-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+}
+
+.tricks-review-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.tricks-review-play {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.tricks-review-play-name {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.tricks-review-play.tricks-review-winner .tricks-review-play-name {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.tricks-review-card {
+  min-width: 3.5rem;
+}
+
+.tricks-review-winner .tricks-review-card {
+  box-shadow: 0 0 0 2px var(--success);
+  border-radius: var(--radius-sm);
+}
+
+.tricks-review-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
 }

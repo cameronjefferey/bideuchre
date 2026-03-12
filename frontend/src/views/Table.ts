@@ -16,6 +16,7 @@ export type TableState = {
   ledSuit?: string | null;
   hand: TableCard[];
   handSizes: Record<"N" | "E" | "S" | "W", number>;
+  seatNames?: Record<"N" | "E" | "S" | "W", string | null>;
   currentTurn?: "N" | "E" | "S" | "W" | null;
   currentBid?: {
     seat: "N" | "E" | "S" | "W";
@@ -40,6 +41,15 @@ export type TableState = {
     trumpType?: string;
   } | null;
   logs: string[];
+  /** When phase is COMPLETE, server sends full trick history with winner for review. */
+  completedTricksReview?: Array<{
+    trick_index: number;
+    leader: string;
+    plays: Array<{ seat: string; card: TableCard }>;
+    winner: string;
+  }>;
+  /** Toggles the "previous round tricks" review panel (hand complete only). */
+  showPreviousTricks?: boolean;
 };
 
 export type TableCallbacks = {
@@ -52,6 +62,8 @@ export type TableCallbacks = {
   onForceScore?: () => void;
   onNextHand?: () => void;
   onSpecialExchange?: (payload: { trump: string; discardIndices: number[] }) => void;
+  onShowPreviousTricks?: () => void;
+  onClosePreviousTricks?: () => void;
 };
 
 function suitSymbol(suit: string): string {
@@ -75,26 +87,37 @@ export function renderTable(
     state.handNumber && state.handNumber > 0
       ? `Hand ${state.handNumber} of 8`
       : "Hand —";
+  const nsNames = [
+    state.seatNames?.N ?? "North",
+    state.seatNames?.S ?? "South",
+  ].join(" & ");
+  const ewNames = [
+    state.seatNames?.E ?? "East",
+    state.seatNames?.W ?? "West",
+  ].join(" & ");
   const scoreHtml =
     state.scoreNS !== undefined && state.scoreEW !== undefined
       ? `
       <div class="score-team">
-        <span class="label">N/S</span>
+        <span class="label">${nsNames}</span>
         <span class="value">${state.scoreNS}</span>
       </div>
       <div class="score-divider"></div>
       <div class="score-team">
-        <span class="label">E/W</span>
+        <span class="label">${ewNames}</span>
         <span class="value">${state.scoreEW}</span>
       </div>
     `
       : "";
+  const youName = state.seatNames?.[state.seat] ?? state.seat;
+  const dealerName = state.seatNames?.[state.dealer as "N" | "E" | "S" | "W"] ?? state.dealer;
+
   header.innerHTML = `
     <div>
       <div class="title">Room ${state.roomCode}</div>
       <div class="subtitle">
-        You are <span class="badge badge-you">${state.seat}</span>
-        · Dealer: ${state.dealer}
+        You are <span class="badge badge-you">${youName}</span>
+        · Dealer: ${dealerName}
         · <span class="badge badge-phase">${state.phase}</span>
       </div>
       ${
@@ -123,7 +146,7 @@ export function renderTable(
   tableTitle.textContent = "Table";
   const tricksInfo = document.createElement("div");
   tricksInfo.className = "subtitle";
-  tricksInfo.textContent = `Tricks this hand · N/S ${nsTricks} – ${ewTricks} E/W`;
+  tricksInfo.textContent = `Tricks this hand · ${nsNames} ${nsTricks} – ${ewTricks} ${ewNames}`;
   const contractInfo = document.createElement("div");
   contractInfo.className = "subtitle";
   if (state.contractSummary) {
@@ -140,9 +163,16 @@ export function renderTable(
     if (state.lastTrickWinner === seat) {
       el.classList.add("winner-seat");
     }
+    const isTurnNow =
+      (state.phase === "BIDDING" && state.currentTurn === seat) ||
+      (state.phase === "PLAYING" && state.playTurn === seat);
+    if (isTurnNow) {
+      el.classList.add("active-seat");
+    }
     const size = state.handSizes[seat] ?? 0;
-    const you = state.seat === seat ? " (you)" : "";
     const tricks = state.tricksWon?.[seat] ?? 0;
+    const displayName = state.seatNames?.[seat] ?? seat;
+    const isYou = state.seat === seat;
     let bidLine = "";
     if (state.winningBid && state.winningBid.seat === seat) {
       if (state.winningBid.label) {
@@ -156,12 +186,12 @@ export function renderTable(
           const sym = suitSymbol(tt);
           bidLine = `Bid: ${state.winningBid.level} ${sym}`;
         } else {
-          bidLine = `Bid: ${state.winningBid.level} ${tt}`;
+          bidLine = `Bid: ${state.winningBid.level} ${tt === "HIGH" ? "High" : tt === "LOW" ? "Low" : tt}`;
         }
       }
     }
     el.innerHTML = `
-      <div class="seat-name">${seat}${you}</div>
+      <div class="seat-name">${displayName}${isYou ? " (you)" : ""}</div>
       <div class="seat-cards">${size} card${size === 1 ? "" : "s"}</div>
       <div class="seat-cards">Tricks: ${tricks}</div>
       ${bidLine ? `<div class="seat-cards">${bidLine}</div>` : ""}
@@ -182,18 +212,30 @@ export function renderTable(
     (["N", "E", "S", "W"] as const).forEach((seatKey) => {
       const c = state.currentTrick?.[seatKey];
       const slot = document.createElement("div");
+      slot.className = "trick-slot";
+
+      const nameLabel = document.createElement("div");
+      nameLabel.className = "trick-slot-name";
+      nameLabel.textContent = state.seatNames?.[seatKey] ?? seatKey;
+      slot.appendChild(nameLabel);
+
       if (c) {
         const sym = suitSymbol(c.suit);
-        slot.className = "playing-card" + (c.suit === "HEARTS" || c.suit === "DIAMONDS" ? " red" : "");
-        slot.innerHTML = `
+        const cardBox = document.createElement("div");
+        cardBox.className =
+          "playing-card" + (c.suit === "HEARTS" || c.suit === "DIAMONDS" ? " red" : "");
+        cardBox.innerHTML = `
           <div class="corner top">${c.rank[0]}${sym}</div>
           <div class="suit-large">${sym}</div>
           <div class="corner bottom">${c.rank[0]}${sym}</div>
         `;
+        slot.appendChild(cardBox);
       } else {
-        slot.className = "trick-slot-empty";
-        slot.textContent = seatKey;
+        const emptyBox = document.createElement("div");
+        emptyBox.className = "trick-slot-empty";
+        slot.appendChild(emptyBox);
       }
+
       trickCards.appendChild(slot);
     });
     center.appendChild(trickCards);
@@ -225,27 +267,35 @@ export function renderTable(
   phaseInfo.className = "table-section";
   phaseInfo.style.marginBottom = "0.5rem";
   const parts: string[] = [];
+  const nameForSeat = (s: "N" | "E" | "S" | "W"): string =>
+    state.seatNames?.[s] ?? s;
   if (state.phase === "BIDDING") {
     parts.push("Bidding");
     if (state.currentBid) {
-      parts.push(`Current: ${state.currentBid.level} ${state.currentBid.bidType} by ${state.currentBid.seat}`);
+      const bidName = nameForSeat(state.currentBid.seat);
+      parts.push(`Current: ${state.currentBid.level} ${state.currentBid.bidType} by ${bidName}`);
     } else {
       parts.push("No bids yet");
     }
     if (state.currentTurn) {
-      parts.push(state.currentTurn === state.seat ? `Your turn` : `${state.currentTurn}'s turn`);
+      const turnName = nameForSeat(state.currentTurn);
+      parts.push(
+        state.currentTurn === state.seat ? `Your turn` : `${turnName}'s turn`,
+      );
     }
   } else if (state.phase === "PLAYING") {
     parts.push("Playing");
     if (state.playTurn) {
-      parts.push(state.playTurn === state.seat ? `Your turn` : `${state.playTurn}'s turn`);
+      const playName = nameForSeat(state.playTurn);
+      parts.push(
+        state.playTurn === state.seat ? `Your turn` : `${playName}'s turn`,
+      );
     }
   } else if (state.phase === "EXCHANGE" && state.specialExchange) {
+    const declName = state.seatNames?.[state.specialExchange.declarer] ?? state.specialExchange.declarer;
     parts.push("Special hand setup");
     parts.push(
-      `${state.specialExchange.contract === "PUT_TWO_DOWN" ? "Put Two Down" : state.specialExchange.contract === "PUT_ONE_DOWN" ? "Put One Down" : "Shoot the Moon"} by ${
-        state.specialExchange.declarer
-      }`,
+      `${state.specialExchange.contract === "PUT_TWO_DOWN" ? "Put Two Down" : state.specialExchange.contract === "PUT_ONE_DOWN" ? "Put One Down" : "Shoot the Moon"} by ${declName}`,
     );
   } else if (state.phase === "COMPLETE") {
     parts.push("Hand complete");
@@ -265,7 +315,11 @@ export function renderTable(
   const sortedHand = [...state.hand].map((c, index) => ({ card: c, index }));
 
   sortedHand.sort((a, b) => {
-    const trump = state.trumpSuit;
+    // High/Low have no trump suit; use no-trump order for sorting.
+    const trump =
+      state.trumpSuit && state.trumpSuit !== "HIGH" && state.trumpSuit !== "LOW"
+        ? state.trumpSuit
+        : null;
 
     const suitOrder = (suit: string): number => {
       if (!trump) {
@@ -339,14 +393,9 @@ export function renderTable(
       <div class="suit-large">${symbol}</div>
       <div class="corner bottom">${c.rank[0]}${symbol}</div>
     `;
-    if (callbacks?.onPlayCard && state.phase === "PLAYING") {
+    if (callbacks?.onPlayCard && state.phase === "PLAYING" && state.playTurn === state.seat) {
       cardEl.style.cursor = "pointer";
       cardEl.onclick = () => callbacks.onPlayCard?.(index);
-    } else if (callbacks?.onSpecialExchange && state.phase === "EXCHANGE" && state.specialExchange) {
-      cardEl.style.cursor = "pointer";
-      cardEl.onclick = () => {
-        cardEl.classList.toggle("selected");
-      };
     }
     handRow.appendChild(cardEl);
   });
@@ -358,6 +407,10 @@ export function renderTable(
   // —— Special exchange controls (special contracts) ——
   if (state.phase === "EXCHANGE" && state.specialExchange && callbacks?.onSpecialExchange) {
     const ex = state.specialExchange;
+    const raw = ex as Record<string, unknown>;
+    const trumpSet = (ex.trumpType ?? raw.trump_type) as string | null | undefined;
+    const exchangeCountNum = Number(ex.exchangeCount ?? raw.exchange_count ?? 0);
+
     const exSection = document.createElement("div");
     exSection.className = "table-section";
     const exTitle = document.createElement("div");
@@ -372,9 +425,11 @@ export function renderTable(
         : ex.contract === "PUT_ONE_DOWN"
         ? "Put One Down"
         : "Shoot the Moon";
-    desc.textContent = `${friendly} by ${ex.declarer}. Choose trump and select ${ex.exchangeCount} card${
-      ex.exchangeCount === 1 ? "" : "s"
-    } from the declarer's hand to exchange.`;
+
+    const isDeclarer = ex.declarer === state.seat;
+    const isPartner = ex.partner === state.seat;
+    const declarerName = state.seatNames?.[ex.declarer] ?? ex.declarer;
+    const partnerName = state.seatNames?.[ex.partner] ?? ex.partner;
 
     const controls = document.createElement("div");
     controls.className = "button-row";
@@ -382,50 +437,128 @@ export function renderTable(
     const trumpSelect = document.createElement("select");
     trumpSelect.style.width = "auto";
     trumpSelect.style.minWidth = "7rem";
-    ["HEARTS", "DIAMONDS", "CLUBS", "SPADES"].forEach((t) => {
+    ["HEARTS", "DIAMONDS", "CLUBS", "SPADES", "HIGH", "LOW"].forEach((t) => {
       const opt = document.createElement("option");
       opt.value = t;
-      opt.textContent = t;
-      if (ex.trumpType && ex.trumpType === t) {
+      opt.textContent = t === "HIGH" ? "High" : t === "LOW" ? "Low" : t;
+      if (trumpSet && trumpSet === t) {
         opt.selected = true;
       }
       trumpSelect.appendChild(opt);
     });
 
-    const confirmBtn = document.createElement("button");
-    confirmBtn.type = "button";
-    confirmBtn.className = "button button-primary";
-    confirmBtn.textContent = "Confirm exchange";
-    confirmBtn.onclick = () => {
-      const cards = Array.from(
-        handRow.querySelectorAll<HTMLDivElement>(".playing-card"),
-      );
-      const discardIndices: number[] = [];
-      cards.forEach((el, idx) => {
-        if (el.classList.contains("selected")) {
-          const original = el.dataset.index;
-          if (original != null) discardIndices.push(Number(original));
-        }
-      });
-      // Always send what the user selected; the backend validates the count
-      // and will send an error message if it's wrong.
-      callbacks.onSpecialExchange?.({
-        trump: trumpSelect.value,
-        discardIndices,
-      });
-    };
-
-    controls.appendChild(trumpSelect);
-    controls.appendChild(confirmBtn);
+    if (isDeclarer) {
+      if (!trumpSet) {
+        desc.textContent = `${friendly} by ${declarerName}. Choose trump first.`;
+        const setTrumpBtn = document.createElement("button");
+        setTrumpBtn.type = "button";
+        setTrumpBtn.className = "button button-primary";
+        setTrumpBtn.textContent = "Set trump";
+        setTrumpBtn.onclick = () => {
+          callbacks.onSpecialExchange?.({
+            kind: "set_trump",
+            trump: trumpSelect.value,
+            discardIndices: [],
+          });
+        };
+        controls.appendChild(trumpSelect);
+        controls.appendChild(setTrumpBtn);
+      } else if (exchangeCountNum > 0 && state.hand.length === 8) {
+        desc.textContent = `${friendly} by ${declarerName}. Select ${exchangeCountNum} card${
+          exchangeCountNum === 1 ? "" : "s"
+        } to discard.`;
+        const discardBtn = document.createElement("button");
+        discardBtn.type = "button";
+        discardBtn.className = "button button-primary";
+        discardBtn.textContent = "Confirm discards";
+        discardBtn.onclick = () => {
+          const cards = Array.from(
+            handRow.querySelectorAll<HTMLDivElement>(".playing-card"),
+          );
+          const discardIndices: number[] = [];
+          cards.forEach((el) => {
+            if (el.classList.contains("selected")) {
+              const original = el.dataset.index;
+              if (original != null) discardIndices.push(Number(original));
+            }
+          });
+          callbacks.onSpecialExchange?.({
+            kind: "discard",
+            trump: trumpSet ?? trumpSelect.value,
+            discardIndices,
+          });
+        };
+        controls.appendChild(discardBtn);
+        // Enable selection clicks for declarer only at this stage.
+        handRow
+          .querySelectorAll<HTMLDivElement>(".playing-card")
+          .forEach((el) => {
+            el.style.cursor = "pointer";
+            el.onclick = () => {
+              el.classList.toggle("selected");
+            };
+          });
+      } else {
+        desc.textContent = `${friendly} by ${declarerName}. Waiting for ${partnerName} to choose cards.`;
+      }
+    } else if (isPartner && exchangeCountNum > 0) {
+      if (!trumpSet) {
+        desc.textContent = `${friendly} by ${declarerName}. Waiting for ${declarerName} to choose trump.`;
+      } else if (state.hand.length === 8) {
+        desc.textContent = `${friendly} by ${declarerName}. Choose ${exchangeCountNum} card${
+          exchangeCountNum === 1 ? "" : "s"
+        } to give to ${declarerName}.`;
+        const giveBtn = document.createElement("button");
+        giveBtn.type = "button";
+        giveBtn.className = "button button-primary";
+        giveBtn.textContent = "Give cards";
+        giveBtn.onclick = () => {
+          const cards = Array.from(
+            handRow.querySelectorAll<HTMLDivElement>(".playing-card"),
+          );
+          const giveIndices: number[] = [];
+          cards.forEach((el) => {
+            if (el.classList.contains("selected")) {
+              const original = el.dataset.index;
+              if (original != null) giveIndices.push(Number(original));
+            }
+          });
+          callbacks.onSpecialExchange?.({
+            kind: "partner_give",
+            trump: trumpSet ?? trumpSelect.value,
+            discardIndices: giveIndices,
+          });
+        };
+        controls.appendChild(giveBtn);
+        handRow
+          .querySelectorAll<HTMLDivElement>(".playing-card")
+          .forEach((el) => {
+            el.style.cursor = "pointer";
+            el.onclick = () => {
+              el.classList.toggle("selected");
+            };
+          });
+      } else {
+        desc.textContent = `${friendly} by ${declarerName}. Waiting for play to begin.`;
+      }
+    } else {
+      if (!trumpSet) {
+        desc.textContent = `${friendly} by ${declarerName}. Waiting for ${declarerName} to choose trump.`;
+      } else {
+        desc.textContent = `${friendly} by ${declarerName}. Exchange in progress.`;
+      }
+    }
 
     exSection.appendChild(exTitle);
     exSection.appendChild(desc);
-    exSection.appendChild(controls);
+    if (controls.childNodes.length > 0) {
+      exSection.appendChild(controls);
+    }
     body.appendChild(exSection);
   }
 
   // —— Bidding controls ——
-  if (state.phase === "BIDDING" && callbacks) {
+  if (state.phase === "BIDDING" && callbacks && state.currentTurn === state.seat) {
     const bidSection = document.createElement("div");
     bidSection.className = "table-section";
     const bidTitle = document.createElement("div");
@@ -516,17 +649,110 @@ export function renderTable(
     body.appendChild(devSection);
   }
 
-  // —— Play next hand ——
-  if (callbacks?.onNextHand && state.phase === "COMPLETE") {
+  // —— Play next hand + Show previous round tricks ——
+  if (state.phase === "COMPLETE") {
     const nextSection = document.createElement("div");
     nextSection.className = "table-section";
-    const nextBtn = document.createElement("button");
-    nextBtn.type = "button";
-    nextBtn.className = "button button-primary";
-    nextBtn.textContent = "Play next hand";
-    nextBtn.onclick = () => callbacks.onNextHand?.();
-    nextSection.appendChild(nextBtn);
+    nextSection.style.display = "flex";
+    nextSection.style.flexWrap = "wrap";
+    nextSection.style.gap = "0.5rem";
+    nextSection.style.alignItems = "center";
+    if (callbacks?.onNextHand) {
+      const nextBtn = document.createElement("button");
+      nextBtn.type = "button";
+      nextBtn.className = "button button-primary";
+      nextBtn.textContent = "Play next hand";
+      nextBtn.onclick = () => callbacks.onNextHand?.();
+      nextSection.appendChild(nextBtn);
+    }
+    if (
+      callbacks?.onShowPreviousTricks &&
+      state.completedTricksReview &&
+      state.completedTricksReview.length > 0
+    ) {
+      const reviewBtn = document.createElement("button");
+      reviewBtn.type = "button";
+      reviewBtn.className = "button";
+      reviewBtn.textContent = "Show previous round tricks";
+      reviewBtn.onclick = () => callbacks.onShowPreviousTricks?.();
+      nextSection.appendChild(reviewBtn);
+    }
     body.appendChild(nextSection);
+  }
+
+  // —— Previous round tricks review panel (overlay) ——
+  if (
+    state.showPreviousTricks &&
+    state.completedTricksReview &&
+    state.completedTricksReview.length > 0
+  ) {
+    const overlay = document.createElement("div");
+    overlay.className = "tricks-review-overlay";
+    const panel = document.createElement("div");
+    panel.className = "tricks-review-panel";
+    const title = document.createElement("h3");
+    title.className = "tricks-review-title";
+    title.textContent = "Previous hand — tricks in order";
+    panel.appendChild(title);
+    const nameFor = (s: string) => state.seatNames?.[s as "N" | "E" | "S" | "W"] ?? s;
+    state.completedTricksReview.forEach((trick) => {
+      const trickBlock = document.createElement("div");
+      trickBlock.className = "tricks-review-trick";
+      const trickLabel = document.createElement("div");
+      trickLabel.className = "tricks-review-trick-label";
+      trickLabel.textContent = `Trick ${trick.trick_index}`;
+      trickBlock.appendChild(trickLabel);
+      const cardsRow = document.createElement("div");
+      cardsRow.className = "tricks-review-cards";
+      trick.plays.forEach(({ seat, card }) => {
+        const cell = document.createElement("div");
+        cell.className = "tricks-review-play";
+        const isWinner = seat === trick.winner;
+        if (isWinner) cell.classList.add("tricks-review-winner");
+        const nameEl = document.createElement("div");
+        nameEl.className = "tricks-review-play-name";
+        nameEl.textContent = nameFor(seat) + (isWinner ? " ✓" : "");
+        cell.appendChild(nameEl);
+        const cardEl = document.createElement("div");
+        cardEl.className = `playing-card tricks-review-card${card.suit === "HEARTS" || card.suit === "DIAMONDS" ? " red" : ""}`;
+        const sym = suitSymbol(card.suit);
+        cardEl.innerHTML = `
+          <div class="corner top">${card.rank[0]}${sym}</div>
+          <div class="suit-large">${sym}</div>
+          <div class="corner bottom">${card.rank[0]}${sym}</div>
+        `;
+        cell.appendChild(cardEl);
+        cardsRow.appendChild(cell);
+      });
+      trickBlock.appendChild(cardsRow);
+      panel.appendChild(trickBlock);
+    });
+    const closeRow = document.createElement("div");
+    closeRow.className = "tricks-review-actions";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "button";
+    closeBtn.textContent = "Close";
+    closeBtn.onclick = () => callbacks?.onClosePreviousTricks?.();
+    closeRow.appendChild(closeBtn);
+    if (callbacks?.onNextHand) {
+      const nextBtn = document.createElement("button");
+      nextBtn.type = "button";
+      nextBtn.className = "button button-primary";
+      nextBtn.textContent = "Play next hand";
+      nextBtn.onclick = () => {
+        callbacks.onClosePreviousTricks?.();
+        callbacks.onNextHand?.();
+      };
+      closeRow.appendChild(nextBtn);
+    }
+    panel.appendChild(closeRow);
+    overlay.appendChild(panel);
+    overlay.onclick = (e) => {
+      if (e.target === overlay) callbacks?.onClosePreviousTricks?.();
+    };
+    panel.onclick = (e) => e.stopPropagation();
+    root.appendChild(overlay);
   }
 
   // —— Activity log ——
@@ -540,7 +766,7 @@ export function renderTable(
   state.logs.forEach((line, i) => {
     const row = document.createElement("div");
     const isError = line.startsWith("Error:");
-    const isHighlight = line.startsWith("Hand complete") || line.startsWith("E wins") || line.startsWith("N wins") || line.startsWith("S wins") || line.startsWith("W wins") || line.startsWith("Bidding team");
+    const isHighlight = line.startsWith("Hand complete") || line.includes(" wins ") || line.startsWith("Bidding team");
     row.className = "log-entry" + (isError ? " error" : isHighlight ? " highlight" : "");
     row.textContent = line;
     logContainer.appendChild(row);

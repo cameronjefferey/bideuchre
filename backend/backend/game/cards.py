@@ -101,3 +101,25 @@ def trick_winner(
     strengths = [strength(c) for c in cards]
     return int(max(range(len(cards)), key=lambda i: strengths[i]))
 
+
+def trick_winner_high_low(
+    plays: Iterable[Card],
+    led_suit: Suit,
+    high: bool,
+) -> int:
+    """Return index of winning card when there is no trump (High or Low).
+
+    In High: highest rank in led suit wins. In Low: lowest rank in led suit wins.
+    Cards that do not follow led suit cannot win.
+    """
+    cards = list(plays)
+    assert cards, "Trick must contain at least one card"
+    in_suit = [(i, c) for i, c in enumerate(cards) if c.suit is led_suit]
+    if not in_suit:
+        return 0
+    if high:
+        winner_idx = max(in_suit, key=lambda p: p[1].rank.value)
+    else:
+        winner_idx = min(in_suit, key=lambda p: p[1].rank.value)
+    return winner_idx[0]
+

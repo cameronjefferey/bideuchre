@@ -9,6 +9,19 @@ import { renderTable, type TableState } from "./views/Table";
 const API_BASE =
   import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
+function normalizeSpecialExchange(
+  raw: Record<string, unknown> | null | undefined
+): TableState["specialExchange"] {
+  if (!raw) return null;
+  return {
+    contract: raw.contract as "PUT_TWO_DOWN" | "PUT_ONE_DOWN" | "SHOOT_MOON",
+    declarer: raw.declarer as "N" | "E" | "S" | "W",
+    partner: raw.partner as "N" | "E" | "S" | "W",
+    exchangeCount: Number(raw.exchange_count ?? raw.exchangeCount ?? 0),
+    trumpType: (raw.trump_type ?? raw.trumpType) as string | null | undefined,
+  };
+}
+
 type View =
   | { kind: "landing"; state: LandingState }
   | { kind: "lobby"; state: LobbyState & { seat: SeatKey } }
@@ -47,6 +60,18 @@ function render(): void {
       onForceScore: handleForceScore,
       onNextHand: handleNextHand,
       onSpecialExchange: handleSpecialExchange,
+      onShowPreviousTricks: () => {
+        if (currentView.kind === "table") {
+          currentView.state.showPreviousTricks = true;
+          render();
+        }
+      },
+      onClosePreviousTricks: () => {
+        if (currentView.kind === "table") {
+          currentView.state.showPreviousTricks = false;
+          render();
+        }
+      },
     });
   }
 }
@@ -152,6 +177,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
                 S: 0,
                 W: 0,
               },
+              seatNames: msg.state.seat_names ?? currentView.state.seats,
               currentTurn: msg.state.current_turn ?? null,
               currentBid: msg.state.current_bid ?? null,
               playTurn: msg.state.play_turn ?? null,
@@ -163,7 +189,8 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
               trumpSuit: msg.state.trump_suit ?? null,
               ledSuit: msg.state.led_suit ?? null,
               winningBid: msg.state.winning_bid ?? null,
-              specialExchange: msg.state.special_exchange ?? null,
+              specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
+              completedTricksReview: msg.state.completed_tricks_review,
               logs: [`Existing hand. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`],
             },
           };
@@ -173,7 +200,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
     } else if (msg.type === "state") {
       // New hand or updated state: show the table with your hand.
       if (currentView.kind === "lobby") {
-            currentView = {
+        currentView = {
           kind: "table",
           state: {
             roomCode: currentView.state.roomCode,
@@ -187,6 +214,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
               S: 0,
               W: 0,
             },
+            seatNames: msg.state.seat_names ?? currentView.state.seats,
             currentTurn: msg.state.current_turn ?? null,
             currentBid: msg.state.current_bid ?? null,
             scoreNS: msg.state.score_ns,
@@ -196,7 +224,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
             trumpSuit: msg.state.trump_suit ?? null,
             ledSuit: msg.state.led_suit ?? null,
             winningBid: msg.state.winning_bid ?? null,
-            specialExchange: msg.state.special_exchange ?? null,
+            specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
             logs: [
               `New hand dealt. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`,
             ],
@@ -232,7 +260,19 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
         if (msg.state.trump_suit !== undefined) currentView.state.trumpSuit = msg.state.trump_suit;
         if (msg.state.led_suit !== undefined) currentView.state.ledSuit = msg.state.led_suit;
         if (msg.state.winning_bid !== undefined) currentView.state.winningBid = msg.state.winning_bid;
-        currentView.state.specialExchange = msg.state.special_exchange ?? null;
+        const nextSpecial = normalizeSpecialExchange(msg.state.special_exchange);
+        if (nextSpecial) {
+          currentView.state.specialExchange = nextSpecial;
+        } else if (msg.state.phase !== "EXCHANGE" || !currentView.state.specialExchange) {
+          currentView.state.specialExchange = null;
+        }
+        // else stay in EXCHANGE with no special_exchange in message: keep existing so partner keeps trump
+        if (msg.state.seat_names !== undefined) {
+          currentView.state.seatNames = msg.state.seat_names;
+        }
+        if (msg.state.completed_tricks_review !== undefined) {
+          currentView.state.completedTricksReview = msg.state.completed_tricks_review;
+        }
         currentView.state.tricksWon = nextTricksWon;
 
         // Detect which seat just won a trick by looking at the delta.
@@ -254,6 +294,28 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
         );
       }
       render();
+    } else if (msg.type === "room_update") {
+      if (currentView.kind === "lobby") {
+        if (msg.room?.seats) {
+          currentView.state.seats = {
+            N: msg.room.seats["N"] ?? null,
+            E: msg.room.seats["E"] ?? null,
+            S: msg.room.seats["S"] ?? null,
+            W: msg.room.seats["W"] ?? null,
+          };
+          render();
+        }
+      } else if (currentView.kind === "table") {
+        if (msg.room?.seats) {
+          currentView.state.seatNames = {
+            N: msg.room.seats["N"] ?? null,
+            E: msg.room.seats["E"] ?? null,
+            S: msg.room.seats["S"] ?? null,
+            W: msg.room.seats["W"] ?? null,
+          };
+          render();
+        }
+      }
     } else if (msg.type === "bidding_complete") {
       if (currentView.kind === "table") {
         if (msg.summary) {
@@ -419,12 +481,14 @@ function handleNextHand(): void {
   }
   ws.send(JSON.stringify({ type: "start_hand" }));
   if (currentView.kind === "table") {
+    currentView.state.showPreviousTricks = false;
     currentView.state.logs.push("Requested next hand.");
     render();
   }
 }
 
 function handleSpecialExchange(payload: {
+  kind: "set_trump" | "discard" | "partner_give";
   trump: string;
   discardIndices: number[];
 }): void {
@@ -435,16 +499,31 @@ function handleSpecialExchange(payload: {
     }
     return;
   }
-  ws.send(
-    JSON.stringify({
-      type: "special_exchange",
-      trump: payload.trump,
-      discard_indices: payload.discardIndices,
-    }),
-  );
+  if (payload.kind === "set_trump") {
+    ws.send(
+      JSON.stringify({
+        type: "special_set_trump",
+        trump: payload.trump,
+      }),
+    );
+  } else if (payload.kind === "discard") {
+    ws.send(
+      JSON.stringify({
+        type: "special_discard",
+        discard_indices: payload.discardIndices,
+      }),
+    );
+  } else if (payload.kind === "partner_give") {
+    ws.send(
+      JSON.stringify({
+        type: "special_partner_give",
+        give_indices: payload.discardIndices,
+      }),
+    );
+  }
   if (currentView.kind === "table") {
     currentView.state.logs.push(
-      `Submitting special exchange: trump=${payload.trump}, discards=[${payload.discardIndices.join(",")}].`,
+      `Special contract action: ${payload.kind}, trump=${payload.trump}, indices=[${payload.discardIndices.join(",")}].`,
     );
     render();
   }
