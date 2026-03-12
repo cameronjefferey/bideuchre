@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from .bidding import Bid, BidLevel, BidType
 from .cards import (
     Card,
+    Rank,
     Suit,
     double_euchre_deck_without_9s_10s,
     trick_winner,
@@ -14,6 +15,22 @@ from .cards import (
 )
 from .scoring import score_for_all_tricks
 from .state import GameState, Phase, SEATS, Player, Trick
+
+
+def first_jack_dealer() -> Tuple[str, List[Tuple[str, Card]]]:
+    """Deal one card at a time in order N, E, S, W until a jack is dealt.
+    The seat that receives the first jack is the dealer. Returns (dealer, sequence).
+    """
+    deck = double_euchre_deck_without_9s_10s()
+    random.shuffle(deck)
+    order = list(SEATS)
+    sequence: List[Tuple[str, Card]] = []
+    for i, card in enumerate(deck):
+        seat = order[i % 4]
+        sequence.append((seat, card))
+        if card.rank is Rank.JACK:
+            return (seat, sequence)
+    return (SEATS[0], sequence)
 
 
 def deal_new_hand(player_names: Dict[str, str], dealer: str) -> GameState:
@@ -169,6 +186,7 @@ def compute_score_delta(state: GameState) -> int:
 
 __all__ = [
     "deal_new_hand",
+    "first_jack_dealer",
     "start_play",
     "play_card",
     "compute_score_delta",

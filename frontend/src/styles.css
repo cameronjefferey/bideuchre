@@ -709,3 +709,127 @@ select {
   padding-top: 1rem;
   border-top: 1px solid var(--border);
 }
+
+/* First jack deals overlay */
+.first-jack-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.first-jack-panel {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 2rem;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  max-width: 420px;
+  text-align: center;
+}
+
+.first-jack-title {
+  margin: 0 0 1.25rem;
+  font-size: 1.35rem;
+}
+
+.first-jack-sequence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.first-jack-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  animation: first-jack-card-in 0.35s ease-out;
+}
+
+@keyframes first-jack-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.first-jack-cell.first-jack-winner {
+  background: rgba(52, 211, 153, 0.2);
+  border: 2px solid var(--success);
+}
+
+.first-jack-seat {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.first-jack-card {
+  font-weight: 600;
+}
+
+.first-jack-dealer {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 1.25rem;
+}
+
+.first-jack-panel .button {
+  margin-top: 0.25rem;
+}
+
+/* First jack on the table: cards dealt at each seat */
+.first-jack-dealt-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: center;
+  margin-top: 0.35rem;
+}
+
+.first-jack-mini {
+  min-width: 2rem;
+  font-size: 0.7rem;
+  padding: 0.2rem;
+}
+
+.first-jack-mini .suit-large {
+  font-size: 0.9rem;
+}
+
+.first-jack-winner-seat {
+  box-shadow: 0 0 0 2px var(--success);
+  border-radius: var(--radius-sm);
+}
+
+.first-jack-winner-card {
+  box-shadow: 0 0 0 2px var(--success);
+}
+
+.first-jack-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.first-jack-dealer-msg {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--accent);
+}

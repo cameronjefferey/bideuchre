@@ -51,6 +51,13 @@ export type TableState = {
   /** Toggles the "previous round tricks" review panel (hand complete only). */
   showPreviousTricks?: boolean;
   connectionLost?: boolean;
+  /** First-jack-deals animation: sequence of (seat, card) and winning dealer. */
+  firstJackAnimation?: {
+    sequence: Array<{ seat: string; card: TableCard }>;
+    dealer: string;
+  };
+  /** How many cards to show in the first-jack animation (0 = none yet). */
+  firstJackRevealedIndex?: number;
 };
 
 export type TableCallbacks = {
@@ -65,6 +72,8 @@ export type TableCallbacks = {
   onSpecialExchange?: (payload: { trump: string; discardIndices: number[] }) => void;
   onShowPreviousTricks?: () => void;
   onClosePreviousTricks?: () => void;
+  onFirstJackComplete?: () => void;
+  onFirstJackRevealNext?: (nextIndex: number) => void;
 };
 
 function suitSymbol(suit: string): string {
@@ -77,6 +86,11 @@ export function renderTable(
   callbacks?: TableCallbacks,
 ): void {
   root.innerHTML = "";
+
+  // First-jack on the table: same 4-seat layout, cards dealt to each seat until a jack
+  const isFirstJack =
+    state.firstJackAnimation &&
+    (callbacks?.onFirstJackComplete || callbacks?.onFirstJackRevealNext);
 
   const card = document.createElement("div");
   card.className = "card";
@@ -120,25 +134,34 @@ export function renderTable(
   const youName = state.seatNames?.[state.seat] ?? state.seat;
   const dealerName = state.seatNames?.[state.dealer as "N" | "E" | "S" | "W"] ?? state.dealer;
 
-  header.innerHTML = `
-    <div>
-      <div class="title">Room ${state.roomCode}</div>
-      <div class="subtitle">
-        You are <span class="badge badge-you">${youName}</span>
-        · Dealer: ${dealerName}
-        · <span class="badge badge-phase">${state.phase}</span>
+  if (isFirstJack) {
+    header.innerHTML = `
+      <div>
+        <div class="title">Room ${state.roomCode}</div>
+        <div class="subtitle">First jack — who deals?</div>
       </div>
-      ${
-        state.contractSummary
-          ? `<div class="subtitle contract-summary">Contract: ${state.contractSummary}</div>`
-          : ""
-      }
-    </div>
-    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-      <div class="pill"><span>${handLabelText}</span></div>
-      <div class="score-board">${scoreHtml}</div>
-    </div>
-  `;
+    `;
+  } else {
+    header.innerHTML = `
+      <div>
+        <div class="title">Room ${state.roomCode}</div>
+        <div class="subtitle">
+          You are <span class="badge badge-you">${youName}</span>
+          · Dealer: ${dealerName}
+          · <span class="badge badge-phase">${state.phase}</span>
+        </div>
+        ${
+          state.contractSummary
+            ? `<div class="subtitle contract-summary">Contract: ${state.contractSummary}</div>`
+            : ""
+        }
+      </div>
+      <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <div class="pill"><span>${handLabelText}</span></div>
+        <div class="score-board">${scoreHtml}</div>
+      </div>
+    `;
+  }
 
   const body = document.createElement("div");
 
@@ -151,10 +174,12 @@ export function renderTable(
     (state.tricksWon?.N ?? 0) + (state.tricksWon?.S ?? 0);
   const ewTricks =
     (state.tricksWon?.E ?? 0) + (state.tricksWon?.W ?? 0);
-  tableTitle.textContent = "Table";
+  tableTitle.textContent = isFirstJack ? "Cards dealt until a jack" : "Table";
   const tricksInfo = document.createElement("div");
   tricksInfo.className = "subtitle";
-  tricksInfo.textContent = `Tricks this hand · ${nsNames} ${nsTricks} – ${ewTricks} ${ewNames}`;
+  if (!isFirstJack) {
+    tricksInfo.textContent = `Tricks this hand · ${nsNames} ${nsTricks} – ${ewTricks} ${ewNames}`;
+  }
   const contractInfo = document.createElement("div");
   contractInfo.className = "subtitle";
   if (state.contractSummary) {
@@ -165,6 +190,76 @@ export function renderTable(
   const tableGrid = document.createElement("div");
   tableGrid.className = "table-grid";
 
+  if (isFirstJack && state.firstJackAnimation) {
+    const fj = state.firstJackAnimation;
+    const revealed = state.firstJackRevealedIndex ?? 0;
+    const showCount = Math.min(revealed + 1, fj.sequence.length);
+    const nameFor = (s: string) =>
+      state.seatNames?.[s as "N" | "E" | "S" | "W"] ?? s;
+    const cardsBySeat: Record<
+      string,
+      { card: TableCard; isJack: boolean }[]
+    > = { N: [], E: [], S: [], W: [] };
+    for (let i = 0; i < showCount; i++) {
+      const { seat, card } = fj.sequence[i];
+      cardsBySeat[seat].push({ card, isJack: card.rank === "JACK" });
+    }
+    function firstJackSeatEl(seat: "N" | "E" | "S" | "W"): HTMLElement {
+      const el = document.createElement("div");
+      el.className = "table-seat";
+      const cards = cardsBySeat[seat];
+      const hasJack = cards.some((c) => c.isJack);
+      if (hasJack && fj.dealer === seat) el.classList.add("first-jack-winner-seat");
+      const nameEl = document.createElement("div");
+      nameEl.className = "seat-name";
+      nameEl.textContent = nameFor(seat) + (state.seat === seat ? " (you)" : "");
+      el.appendChild(nameEl);
+      const cardRow = document.createElement("div");
+      cardRow.className = "first-jack-dealt-cards";
+      cards.forEach(({ card: c, isJack }) => {
+        const sym = suitSymbol(c.suit);
+        const cardEl = document.createElement("div");
+        cardEl.className =
+          "playing-card first-jack-mini" +
+          (c.suit === "HEARTS" || c.suit === "DIAMONDS" ? " red" : "") +
+          (isJack ? " first-jack-winner-card" : "");
+        cardEl.innerHTML = `<div class="corner top">${c.rank[0]}${sym}</div><div class="suit-large">${sym}</div>`;
+        cardRow.appendChild(cardEl);
+      });
+      el.appendChild(cardRow);
+      return el;
+    }
+    const fjCenter = document.createElement("div");
+    fjCenter.className = "table-center first-jack-center";
+    const lastDealt = showCount > 0 ? fj.sequence[showCount - 1] : null;
+    const jackRevealed = lastDealt && lastDealt.card.rank === "JACK";
+    if (jackRevealed) {
+      const msg = document.createElement("div");
+      msg.className = "first-jack-dealer-msg";
+      msg.textContent = `${nameFor(fj.dealer)} wins the deal!`;
+      fjCenter.appendChild(msg);
+      const dealBtn = document.createElement("button");
+      dealBtn.type = "button";
+      dealBtn.className = "button button-primary";
+      dealBtn.textContent = "Deal hand";
+      dealBtn.onclick = () => callbacks?.onFirstJackComplete?.();
+      fjCenter.appendChild(dealBtn);
+    } else {
+      fjCenter.textContent = "Dealing…";
+      if (showCount < fj.sequence.length && callbacks?.onFirstJackRevealNext) {
+        setTimeout(() => callbacks.onFirstJackRevealNext?.(showCount), 450);
+      }
+    }
+    tableGrid.appendChild(document.createElement("div"));
+    tableGrid.appendChild(firstJackSeatEl("N"));
+    tableGrid.appendChild(document.createElement("div"));
+    tableGrid.appendChild(firstJackSeatEl("W"));
+    tableGrid.appendChild(fjCenter);
+    tableGrid.appendChild(firstJackSeatEl("E"));
+    tableGrid.appendChild(document.createElement("div"));
+    tableGrid.appendChild(firstJackSeatEl("S"));
+    tableGrid.appendChild(document.createElement("div"));
+  } else {
   function seatEl(seat: "N" | "E" | "S" | "W", position: string): HTMLElement {
     const el = document.createElement("div");
     el.className = "table-seat";
@@ -260,6 +355,7 @@ export function renderTable(
   tableGrid.appendChild(document.createElement("div"));
   tableGrid.appendChild(seatEl("S", "Bottom"));
   tableGrid.appendChild(document.createElement("div"));
+  }
 
   tableFelt.appendChild(tableGrid);
   tableSection.appendChild(tableTitle);
@@ -307,6 +403,8 @@ export function renderTable(
     );
   } else if (state.phase === "COMPLETE") {
     parts.push("Hand complete");
+  } else if (isFirstJack || state.phase === "AWAIT_DEAL") {
+    parts.push("First jack — who deals?");
   }
   phaseInfo.innerHTML = `<div class="subtitle" style="margin:0">${parts.join(" · ")}</div>`;
   body.appendChild(phaseInfo);
@@ -410,7 +508,7 @@ export function renderTable(
 
   handSection.appendChild(handLabel);
   handSection.appendChild(handRow);
-  body.appendChild(handSection);
+  if (!isFirstJack) body.appendChild(handSection);
 
   // —— Special exchange controls (special contracts) ——
   if (state.phase === "EXCHANGE" && state.specialExchange && callbacks?.onSpecialExchange) {

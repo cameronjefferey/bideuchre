@@ -8,7 +8,7 @@ export type LobbyState = {
 };
 
 export type LobbyCallbacks = {
-  onStartHand?: () => void;
+  onBeginGame?: () => void;
   onDevFill?: () => void;
 };
 
@@ -51,7 +51,7 @@ export function renderLobby(
   header.innerHTML = `
     <div>
       <div class="title">Lobby</div>
-      <div class="subtitle">Share the room code so others can join. When all four seats are filled, click <strong>Deal new hand</strong> to start.</div>
+      <div class="subtitle">Share the room code so others can join. When all four seats are filled, click <strong>Start</strong> to begin.</div>
     </div>
   `;
   pill.appendChild(copyBtn);
@@ -102,17 +102,17 @@ export function renderLobby(
   ).length;
   const canStart = filledCount === 4;
 
-  if (callbacks?.onStartHand || callbacks?.onDevFill) {
+  if (callbacks?.onBeginGame || callbacks?.onDevFill) {
     const controls = document.createElement("div");
     controls.className = "button-row";
     controls.style.marginTop = "1rem";
-    if (callbacks?.onStartHand) {
+    if (callbacks?.onBeginGame) {
       const startButton = document.createElement("button");
       startButton.type = "button";
       startButton.className = "button button-primary";
-      startButton.textContent = "Deal new hand";
+      startButton.textContent = "Start";
       startButton.disabled = !canStart;
-      startButton.onclick = () => callbacks.onStartHand?.();
+      startButton.onclick = () => callbacks.onBeginGame?.();
       controls.appendChild(startButton);
       if (!canStart) {
         const hint = document.createElement("span");

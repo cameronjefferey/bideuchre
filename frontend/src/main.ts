@@ -31,6 +31,17 @@ const app = document.getElementById("app") as HTMLElement;
 
 let ws: WebSocket | null = null;
 
+/** True when page is unloading (refresh/navigate); don't show connection lost. */
+let pageUnloading = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    pageUnloading = true;
+  });
+}
+
+/** Set when backend sends hand_started; injected into table state on next state msg. */
+let pendingFirstJack: { sequence: Array<{ seat: string; card: { suit: string; rank: string } }>; dealer: string } | null = null;
+
 let currentView: View = {
   kind: "landing",
   state: {
@@ -48,7 +59,7 @@ function render(): void {
     });
   } else if (currentView.kind === "lobby") {
     renderLobby(app, currentView.state, {
-      onStartHand: handleStartHand,
+      onBeginGame: handleBeginGame,
       onDevFill: handleDevFill,
     });
   } else if (currentView.kind === "table") {
@@ -69,6 +80,23 @@ function render(): void {
       onClosePreviousTricks: () => {
         if (currentView.kind === "table") {
           currentView.state.showPreviousTricks = false;
+          render();
+        }
+      },
+      onFirstJackComplete: () => {
+        if (currentView.kind === "table") {
+          currentView.state.firstJackAnimation = undefined;
+          currentView.state.firstJackRevealedIndex = undefined;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "start_hand" }));
+            currentView.state.logs.push("Dealing hand…");
+          }
+          render();
+        }
+      },
+      onFirstJackRevealNext: (nextIndex: number) => {
+        if (currentView.kind === "table" && currentView.state.firstJackAnimation) {
+          currentView.state.firstJackRevealedIndex = nextIndex;
           render();
         }
       },
@@ -146,6 +174,10 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
   ws = new WebSocket(`${wsBase}/ws/${roomCode}/${data.seat}`);
   ws.onopen = () => {
     console.log("WebSocket connected");
+    if (currentView.kind === "lobby" || currentView.kind === "table") {
+      (currentView.state as { connectionLost?: boolean }).connectionLost = false;
+      render();
+    }
   };
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -200,37 +232,44 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
     } else if (msg.type === "state") {
       // New hand or updated state: show the table with your hand.
       if (currentView.kind === "lobby") {
-        currentView = {
-          kind: "table",
-          state: {
-            roomCode: currentView.state.roomCode,
-            seat: currentView.state.seat,
-            phase: msg.state.phase,
-            dealer: msg.state.dealer,
-            hand: msg.state.hand ?? [],
-            handSizes: msg.state.hand_sizes ?? {
-              N: 0,
-              E: 0,
-              S: 0,
-              W: 0,
-            },
-            seatNames: msg.state.seat_names ?? currentView.state.seats,
-            currentTurn: msg.state.current_turn ?? null,
-            currentBid: msg.state.current_bid ?? null,
-            scoreNS: msg.state.score_ns,
-            scoreEW: msg.state.score_ew,
-            handNumber: msg.state.hand_number,
-            contractSummary: msg.state.bidding_summary ?? null,
-            trumpSuit: msg.state.trump_suit ?? null,
-            ledSuit: msg.state.led_suit ?? null,
-            winningBid: msg.state.winning_bid ?? null,
-            specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
-            logs: [
-              `New hand dealt. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`,
-            ],
+        const tableState: TableState = {
+          roomCode: currentView.state.roomCode,
+          seat: currentView.state.seat,
+          phase: msg.state.phase,
+          dealer: msg.state.dealer,
+          hand: msg.state.hand ?? [],
+          handSizes: msg.state.hand_sizes ?? {
+            N: 0,
+            E: 0,
+            S: 0,
+            W: 0,
           },
+          seatNames: msg.state.seat_names ?? currentView.state.seats,
+          currentTurn: msg.state.current_turn ?? null,
+          currentBid: msg.state.current_bid ?? null,
+          scoreNS: msg.state.score_ns,
+          scoreEW: msg.state.score_ew,
+          handNumber: msg.state.hand_number,
+          contractSummary: msg.state.bidding_summary ?? null,
+          trumpSuit: msg.state.trump_suit ?? null,
+          ledSuit: msg.state.led_suit ?? null,
+          winningBid: msg.state.winning_bid ?? null,
+          specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
+          tricksWon: (msg.state.tricks_won as TableState["tricksWon"]) ?? { N: 0, E: 0, S: 0, W: 0 },
+          logs: [
+            `New hand dealt. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`,
+          ],
         };
+        if (pendingFirstJack) {
+          tableState.firstJackAnimation = pendingFirstJack;
+          pendingFirstJack = null;
+        }
+        currentView = { kind: "table", state: tableState };
       } else if (currentView.kind === "table") {
+        if (pendingFirstJack) {
+          currentView.state.firstJackAnimation = pendingFirstJack;
+          pendingFirstJack = null;
+        }
         // Track trick counts so we can show running totals and highlight
         // the winner of the most recent trick.
         const prevTricksWon = currentView.state.tricksWon;
@@ -241,6 +280,10 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
         currentView.state.phase = msg.state.phase;
         currentView.state.dealer = msg.state.dealer;
         currentView.state.hand = msg.state.hand ?? [];
+        if (msg.state.phase === "BIDDING" || msg.state.phase === "PLAYING") {
+          currentView.state.firstJackAnimation = undefined;
+          currentView.state.firstJackRevealedIndex = undefined;
+        }
         currentView.state.handSizes =
           msg.state.hand_sizes ??
           ({
@@ -316,6 +359,38 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
           render();
         }
       }
+    } else if (msg.type === "hand_started") {
+      if (msg.first_jack && typeof msg.first_jack === "object") {
+        const firstJack = {
+          sequence: Array.isArray(msg.first_jack.sequence) ? msg.first_jack.sequence : [],
+          dealer: String(msg.first_jack.dealer ?? "N"),
+        };
+        if (currentView.kind === "lobby") {
+          currentView = {
+            kind: "table",
+            state: {
+              roomCode: currentView.state.roomCode,
+              seat: currentView.state.seat,
+              phase: "AWAIT_DEAL",
+              dealer: firstJack.dealer,
+              hand: [],
+              handSizes: { N: 0, E: 0, S: 0, W: 0 },
+              seatNames: {
+                N: currentView.state.seats.N,
+                E: currentView.state.seats.E,
+                S: currentView.state.seats.S,
+                W: currentView.state.seats.W,
+              },
+              firstJackAnimation: firstJack,
+              firstJackRevealedIndex: 0,
+              logs: [...currentView.state.logs, "First jack — who deals?"],
+            },
+          };
+          render();
+        } else {
+          pendingFirstJack = firstJack;
+        }
+      }
     } else if (msg.type === "bidding_complete") {
       if (currentView.kind === "table") {
         if (msg.summary) {
@@ -366,6 +441,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
   };
   ws.onclose = () => {
     ws = null;
+    if (pageUnloading) return;
     if (currentView.kind === "lobby" || currentView.kind === "table") {
       (currentView.state as { connectionLost?: boolean }).connectionLost = true;
       currentView.state.logs.push("Disconnected from table.");
@@ -376,16 +452,32 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
   render();
 }
 
-function handleStartHand(): void {
+function handleBeginGame(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     if (currentView.kind === "lobby") {
+      currentView.state.logs.push("Cannot start: not connected to table.");
+      render();
+    }
+    return;
+  }
+  ws.send(JSON.stringify({ type: "begin_game" }));
+  if (currentView.kind === "lobby") {
+    currentView.state.logs.push("Starting game…");
+    render();
+  }
+}
+
+function handleStartHand(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (currentView.kind === "table") {
       currentView.state.logs.push("Cannot deal: not connected to table.");
       render();
     }
     return;
   }
   ws.send(JSON.stringify({ type: "start_hand" }));
-  if (currentView.kind === "lobby") {
+  if (currentView.kind === "table") {
+    currentView.state.showPreviousTricks = false;
     currentView.state.logs.push("Requested new hand.");
     render();
   }

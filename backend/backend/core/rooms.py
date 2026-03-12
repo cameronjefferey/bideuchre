@@ -22,6 +22,11 @@ class PlayerInfo:
     name: str
 
 
+def _next_dealer(seat: str) -> str:
+    idx = SEATS.index(seat)
+    return SEATS[(idx + 1) % 4]
+
+
 @dataclass
 class Room:
     code: str
@@ -32,6 +37,8 @@ class Room:
     score_ns: int = 0
     score_ew: int = 0
     hand_number: int = 0  # 1–8 in a full game
+    dealer: Optional[str] = None  # set by first jack for first hand; then rotates
+    pending_initial_deal: bool = False  # True after begin_game until first start_hand
 
     def join(self, name: str, preferred_seat: Optional[str] = None) -> str:
         seats = list(SEATS)
