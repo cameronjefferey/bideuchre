@@ -334,7 +334,8 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, seat: str) ->
         while True:
             data = await websocket.receive_json()
             try:
-                msg_type = data.get("type")
+                raw_type = data.get("type")
+                msg_type = str(raw_type).strip() if raw_type is not None else None
 
                 if msg_type == "begin_game":
                     if len(room.players) != 4:

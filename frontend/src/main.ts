@@ -129,27 +129,34 @@ async function handleJoinRoom(name: string, roomCode: string): Promise<void> {
   } catch (err) {
     console.error(err);
     if (currentView.kind === "landing") {
-      currentView.state.error = "Could not join room. Check the code and backend.";
+      currentView.state.error =
+        err instanceof Error ? err.message : "Could not join room. Check the code and backend.";
       render();
     }
   }
 }
 
 async function joinRoom(name: string, roomCode: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/rooms/${roomCode}/join`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/rooms/${roomCode}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  } catch (err) {
+    throw new Error("Cannot reach backend. Check VITE_BACKEND_URL and that the backend is running.");
+  }
   if (!res.ok) {
-    throw new Error("Failed to join room");
+    const msg = res.status === 404 ? "Room not found. Check the code or create a new room." : `Join failed (${res.status}).`;
+    throw new Error(msg);
   }
   const data: { seat: SeatKey; room_code: string } = await res.json();
 
   // Fetch room summary so we can show the lobby.
   const roomRes = await fetch(`${API_BASE}/rooms/${roomCode}`);
   if (!roomRes.ok) {
-    throw new Error("Failed to load room");
+    throw new Error(roomRes.status === 404 ? "Room not found." : `Load room failed (${roomRes.status}).`);
   }
   const roomData: { code: string; seats: Record<SeatKey, string> } =
     await roomRes.json();
