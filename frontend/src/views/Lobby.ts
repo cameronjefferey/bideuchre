@@ -51,7 +51,10 @@ export function renderLobby(
   header.innerHTML = `
     <div>
       <div class="title">Lobby</div>
-      <div class="subtitle">Share the room code so others can join. When all four seats are filled, click <strong>Start</strong> to begin.</div>
+      <div class="subtitle">
+        Share the room code so others can join. When all four seats are filled,
+        click <strong>Go to table</strong> so everyone can sit down together, then start the game from the table.
+      </div>
     </div>
   `;
   pill.appendChild(copyBtn);
@@ -110,7 +113,7 @@ export function renderLobby(
       const startButton = document.createElement("button");
       startButton.type = "button";
       startButton.className = "button button-primary";
-      startButton.textContent = "Start";
+      startButton.textContent = "Go to table";
       startButton.disabled = !canStart;
       startButton.onclick = () => callbacks.onBeginGame?.();
       controls.appendChild(startButton);

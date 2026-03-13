@@ -27,6 +27,10 @@ export type TableState = {
   currentTrick?: Partial<Record<"N" | "E" | "S" | "W", TableCard>>;
   tricksWon?: Record<"N" | "E" | "S" | "W", number>;
   lastTrickWinner?: "N" | "E" | "S" | "W" | null;
+  /** Last completed trick's cards by seat, for the collect-cards step. */
+  lastCompletedTrick?: Partial<Record<"N" | "E" | "S" | "W", TableCard>>;
+  /** Whether to show the last completed trick instead of the live trick. */
+  showLastTrick?: boolean;
   specialExchange?: {
     contract: "PUT_TWO_DOWN" | "PUT_ONE_DOWN" | "SHOOT_MOON";
     declarer: "N" | "E" | "S" | "W";
@@ -74,6 +78,9 @@ export type TableCallbacks = {
   onClosePreviousTricks?: () => void;
   onFirstJackComplete?: () => void;
   onFirstJackRevealNext?: (nextIndex: number) => void;
+  onCollectTrick?: () => void;
+  /** From pre-game \"around the table\" view, start the game (dealer / first jack). */
+  onStartGame?: () => void;
 };
 
 function suitSymbol(suit: string): string {
@@ -304,7 +311,67 @@ export function renderTable(
 
   const center = document.createElement("div");
   center.className = "table-center";
-  if (state.phase === "PLAYING" && state.currentTrick) {
+
+  const showLast = state.showLastTrick && state.lastCompletedTrick;
+
+  if (showLast) {
+    const ledLabel = document.createElement("div");
+    ledLabel.textContent = "Last trick";
+    center.appendChild(ledLabel);
+    const trickCards = document.createElement("div");
+    trickCards.className = "trick-cards";
+    (["N", "E", "S", "W"] as const).forEach((seatKey) => {
+      const c = state.lastCompletedTrick?.[seatKey];
+      const slot = document.createElement("div");
+      slot.className = "trick-slot";
+
+      const nameLabel = document.createElement("div");
+      nameLabel.className = "trick-slot-name";
+      nameLabel.textContent = state.seatNames?.[seatKey] ?? seatKey;
+      slot.appendChild(nameLabel);
+
+      if (c) {
+        const sym = suitSymbol(c.suit);
+        const cardBox = document.createElement("div");
+        cardBox.className =
+          "playing-card" + (c.suit === "HEARTS" || c.suit === "DIAMONDS" ? " red" : "");
+        cardBox.innerHTML = `
+          <div class="corner top">${c.rank[0]}${sym}</div>
+          <div class="suit-large">${sym}</div>
+          <div class="corner bottom">${c.rank[0]}${sym}</div>
+        `;
+        slot.appendChild(cardBox);
+      } else {
+        const emptyBox = document.createElement("div");
+        emptyBox.className = "trick-slot-empty";
+        slot.appendChild(emptyBox);
+      }
+
+      trickCards.appendChild(slot);
+    });
+    center.appendChild(trickCards);
+
+    const actions = document.createElement("div");
+    actions.className = "button-row";
+    const winner = state.lastTrickWinner;
+    const winnerName = winner
+      ? state.seatNames?.[winner] ?? winner
+      : "Winner";
+    if (winner && winner === state.seat && callbacks?.onCollectTrick) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "button button-primary";
+      btn.textContent = "Collect cards";
+      btn.onclick = () => callbacks.onCollectTrick?.();
+      actions.appendChild(btn);
+    } else {
+      const msg = document.createElement("div");
+      msg.className = "subtitle";
+      msg.textContent = `${winnerName} is collecting the cards…`;
+      actions.appendChild(msg);
+    }
+    center.appendChild(actions);
+  } else if (state.phase === "PLAYING" && state.currentTrick) {
     const ledLabel = document.createElement("div");
     ledLabel.textContent = state.ledSuit
       ? `Current trick · ${state.ledSuit} led`
@@ -365,6 +432,33 @@ export function renderTable(
   }
   tableSection.appendChild(tableFelt);
   body.appendChild(tableSection);
+
+  // —— Pre-game controls: everyone is at the table, but game has not started.
+  // Show a clear \"Start game\" button that will trigger the dealer / first‑jack
+  // process via the backend.
+  if (!isFirstJack && state.phase === "AWAIT_DEAL" && callbacks?.onStartGame) {
+    const startSection = document.createElement("div");
+    startSection.className = "table-section";
+    const startTitle = document.createElement("div");
+    startTitle.className = "section-title";
+    startTitle.textContent = "Ready to begin?";
+    const startDesc = document.createElement("div");
+    startDesc.className = "subtitle";
+    startDesc.textContent =
+      "All four seats are filled. When everyone is ready, start the game to decide the dealer.";
+    const startRow = document.createElement("div");
+    startRow.className = "button-row";
+    const startBtn = document.createElement("button");
+    startBtn.type = "button";
+    startBtn.className = "button button-primary";
+    startBtn.textContent = "Start game";
+    startBtn.onclick = () => callbacks.onStartGame?.();
+    startRow.appendChild(startBtn);
+    startSection.appendChild(startTitle);
+    startSection.appendChild(startDesc);
+    startSection.appendChild(startRow);
+    body.appendChild(startSection);
+  }
 
   // —— Phase / turn info ——
   const phaseInfo = document.createElement("div");
@@ -499,7 +593,12 @@ export function renderTable(
       <div class="suit-large">${symbol}</div>
       <div class="corner bottom">${c.rank[0]}${symbol}</div>
     `;
-    if (callbacks?.onPlayCard && state.phase === "PLAYING" && state.playTurn === state.seat) {
+    if (
+      callbacks?.onPlayCard &&
+      state.phase === "PLAYING" &&
+      state.playTurn === state.seat &&
+      !state.showLastTrick
+    ) {
       cardEl.style.cursor = "pointer";
       cardEl.onclick = () => callbacks.onPlayCard?.(index);
     }

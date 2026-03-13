@@ -278,6 +278,17 @@ def _serialize_state_for_seat(
                 }
             )
 
+    # Last completed trick (if any), for showing the \"last trick\" overlay
+    # during the PLAYING phase with all cards visible, even after the engine
+    # has already started the next trick internally.
+    last_completed_trick: Dict[str, dict] | None = None
+    if state.completed_tricks:
+        last = state.completed_tricks[-1]
+        if last.plays:
+            last_completed_trick = {
+                seat: card.to_dict() for seat, card in last.plays
+            }
+
     return {
         "phase": state.phase.name,
         "dealer": state.dealer,
@@ -301,6 +312,7 @@ def _serialize_state_for_seat(
         "winning_bid": winning_bid_info,
         "seat_names": seat_names or {},
         "completed_tricks_review": completed_tricks_review,
+        "last_completed_trick": last_completed_trick,
     }
 
 

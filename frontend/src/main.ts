@@ -71,6 +71,12 @@ function render(): void {
       onForceScore: handleForceScore,
       onNextHand: handleNextHand,
       onSpecialExchange: handleSpecialExchange,
+      onCollectTrick: () => {
+        if (currentView.kind === "table") {
+          currentView.state.showLastTrick = false;
+          render();
+        }
+      },
       onShowPreviousTricks: () => {
         if (currentView.kind === "table") {
           currentView.state.showPreviousTricks = true;
@@ -100,6 +106,7 @@ function render(): void {
           render();
         }
       },
+      onStartGame: handleStartGame,
     });
   }
 }
@@ -230,6 +237,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
               winningBid: msg.state.winning_bid ?? null,
               specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
               completedTricksReview: msg.state.completed_tricks_review,
+              lastCompletedTrick: msg.state.last_completed_trick ?? undefined,
               logs: [`Existing hand. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`],
             },
           };
@@ -262,7 +270,15 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
           ledSuit: msg.state.led_suit ?? null,
           winningBid: msg.state.winning_bid ?? null,
           specialExchange: normalizeSpecialExchange(msg.state.special_exchange),
-          tricksWon: (msg.state.tricks_won as TableState["tricksWon"]) ?? { N: 0, E: 0, S: 0, W: 0 },
+          tricksWon:
+            (msg.state.tricks_won as TableState["tricksWon"]) ?? {
+              N: 0,
+              E: 0,
+              S: 0,
+              W: 0,
+            },
+          lastCompletedTrick: undefined,
+          showLastTrick: false,
           logs: [
             `New hand dealt. Phase=${msg.state.phase}, dealer=${msg.state.dealer}`,
           ],
@@ -280,6 +296,7 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
         // Track trick counts so we can show running totals and highlight
         // the winner of the most recent trick.
         const prevTricksWon = currentView.state.tricksWon;
+        const prevTrick = currentView.state.currentTrick;
         const nextTricksWon = msg.state.tricks_won as
           | Record<SeatKey, number>
           | undefined;
@@ -323,7 +340,42 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
         if (msg.state.completed_tricks_review !== undefined) {
           currentView.state.completedTricksReview = msg.state.completed_tricks_review;
         }
+        if (msg.state.last_completed_trick !== undefined) {
+          currentView.state.lastCompletedTrick = msg.state.last_completed_trick as TableState["currentTrick"];
+        }
         currentView.state.tricksWon = nextTricksWon;
+
+        // Detect trick completion: previous trick had 3–4 cards, new trick is empty or missing.
+        const prevCount = prevTrick
+          ? Object.keys(prevTrick).length
+          : 0;
+        const newCount = currentView.state.currentTrick
+          ? Object.keys(currentView.state.currentTrick).length
+          : 0;
+        if (
+          msg.state.phase === "PLAYING" &&
+          prevCount >= 3 &&
+          (newCount === 0 || !currentView.state.currentTrick)
+        ) {
+          // Prefer the server-provided full last_completed_trick (which always
+          // has all cards), but fall back to the previous client-side trick if
+          // running against an older backend.
+          const fromServer = msg.state.last_completed_trick as
+            | TableState["currentTrick"]
+            | undefined;
+          currentView.state.lastCompletedTrick =
+            fromServer ?? (prevTrick as TableState["currentTrick"]);
+          currentView.state.showLastTrick = true;
+        }
+        // As soon as the next trick actually starts (a new card is played),
+        // hide the "last trick" overlay for everyone so all seats see the
+        // live trick instead of being stuck on the previous one.
+        if (msg.state.phase === "PLAYING" && newCount > 0) {
+          currentView.state.showLastTrick = false;
+        }
+        if (msg.state.phase !== "PLAYING") {
+          currentView.state.showLastTrick = false;
+        }
 
         // Detect which seat just won a trick by looking at the delta.
         let lastTrickWinner: SeatKey | null = null;
@@ -373,6 +425,8 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
           dealer: String(msg.first_jack.dealer ?? "N"),
         };
         if (currentView.kind === "lobby") {
+          // Original flow: coming straight from the lobby into the first-jack
+          // animation. Create a fresh table view.
           currentView = {
             kind: "table",
             state: {
@@ -394,7 +448,18 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
             },
           };
           render();
+        } else if (currentView.kind === "table") {
+          // New flow: players are already \"around the table\" in AWAIT_DEAL and
+          // click Start game. Inject the first-jack animation into the existing
+          // table state immediately so they see \"First jack — who deals?\".
+          currentView.state.phase = "AWAIT_DEAL";
+          currentView.state.dealer = firstJack.dealer;
+          currentView.state.firstJackAnimation = firstJack;
+          currentView.state.firstJackRevealedIndex = 0;
+          currentView.state.logs.push("First jack — who deals?");
+          render();
         } else {
+          // Any other view (very unlikely): stash and apply on next state.
           pendingFirstJack = firstJack;
         }
       }
@@ -460,15 +525,47 @@ async function joinRoom(name: string, roomCode: string): Promise<void> {
 }
 
 function handleBeginGame(): void {
+  if (currentView.kind === "lobby") {
+    // Move everyone from the lobby into the shared table view without
+    // actually starting the game yet. From there, a separate \"Start game\"
+    // action will trigger the dealer / first‑jack process.
+    currentView = {
+      kind: "table",
+      state: {
+        roomCode: currentView.state.roomCode,
+        seat: currentView.state.seat,
+        phase: "AWAIT_DEAL",
+        dealer: currentView.state.seat,
+        hand: [],
+        handSizes: {
+          N: 0,
+          E: 0,
+          S: 0,
+          W: 0,
+        },
+        seatNames: currentView.state.seats,
+        currentTurn: null,
+        currentBid: null,
+        logs: [
+          ...currentView.state.logs,
+          "All players are at the table. When you're ready, start the game to decide the dealer.",
+        ],
+      },
+    };
+    render();
+  }
+}
+
+function handleStartGame(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    if (currentView.kind === "lobby") {
-      currentView.state.logs.push("Cannot start: not connected to table.");
+    if (currentView.kind === "table") {
+      currentView.state.logs.push("Cannot start game: not connected to table.");
       render();
     }
     return;
   }
   ws.send(JSON.stringify({ type: "begin_game" }));
-  if (currentView.kind === "lobby") {
+  if (currentView.kind === "table") {
     currentView.state.logs.push("Starting game…");
     render();
   }
